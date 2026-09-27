@@ -1,0 +1,7 @@
+component,input_series,qty_per_unit,unit_cost_usd,baseline_date
+injection-moulded housing,WPU072,0.850,3.20,2024-03-01
+steel mounting bracket,WPU3012,2.000,1.85,2025-09-01
+copper wiring harness,WPU102,0.400,6.40,2022-06-01
+corrugated shipping carton,WPU0911,1.000,0.94,2026-06-01
+adhesive and solvents,WPU061,0.120,4.10,2025-01-01
+plant electricity per unit,APU000072610,3.500,0.196,2023-11-01

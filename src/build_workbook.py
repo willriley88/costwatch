@@ -145,45 +145,71 @@ def sheet_bom(wb: Workbook, bom: list[dict], rows: list[dict]) -> None:
     ws = wb.create_sheet("BOM Impact")
     ws["A1"] = "Bill-of-materials cost impact"
     ws["A1"].font = Font(bold=True, size=15, color=NAVY)
-    ws["A2"] = "Applies each input's published index change to your own baseline unit cost."
+    ws["A2"] = ("Applies each input's index change SINCE YOUR OWN BASELINE DATE "
+                "to your baseline unit cost.")
     ws["A2"].font = Font(size=9, italic=True, color="FF6B7280")
 
     by_sid = {r["sid"]: r for r in rows}
     _hdr(ws, 4, ["Component", "Input series", "Qty/unit", "Baseline $/unit-of-input",
-                 "Baseline cost/unit", "Index 12-mo %", "Implied $/unit now", "Delta $/unit"],
-         [22, 28, 10, 22, 16, 13, 18, 14])
+                 "Baseline cost/unit", "Baseline date", "Index priced from",
+                 "Index as of", "Change since baseline", "Implied $/unit now",
+                 "Delta $/unit"],
+         [22, 28, 10, 22, 16, 13, 16, 13, 18, 18, 14])
 
     r = 5
     first_data_row = r
     for item in bom:
         sid = item["input_series"]
         meta = S.CATALOG.get(sid)
-        chg = (by_sid.get(sid) or {}).get("chg_12m_pct")
         qty = float(item["qty_per_unit"])
         unit_cost = float(item["unit_cost_usd"])
         base = qty * unit_cost
+
+        # The baseline date is the user's, not ours. Falling back to a fixed
+        # 12-month window when it is missing keeps old BOMs working, but the
+        # sheet says which basis each row used rather than hiding the swap.
+        baseline_date = (item.get("baseline_date") or "").strip()
+        info = S.change_since(sid, baseline_date) if baseline_date else None
+        if info is not None:
+            chg = info["pct"]
+            priced_from, as_of = info["baseline_matched"], info["latest_date"]
+        else:
+            chg = (by_sid.get(sid) or {}).get("chg_12m_pct")
+            priced_from = "12-mo window"
+            as_of = (by_sid.get(sid) or {}).get("as_of")
 
         ws.cell(row=r, column=1, value=item["component"])
         ws.cell(row=r, column=2, value=f"{meta.label} ({sid})" if meta else sid).font = Font(size=9)
         ws.cell(row=r, column=3, value=qty).number_format = "#,##0.000"
         ws.cell(row=r, column=4, value=unit_cost).number_format = '"$"#,##0.00'
         ws.cell(row=r, column=5, value=base).number_format = '"$"#,##0.00'
+        ws.cell(row=r, column=6, value=baseline_date or "—").font = Font(size=9)
+        pf = ws.cell(row=r, column=7, value=priced_from)
+        pf.font = Font(size=9, color=RED if info is None else "FF6B7280")
+        ws.cell(row=r, column=8, value=as_of or "—").font = Font(size=9)
+
+        # A baseline the series cannot honour (asked for a date it never
+        # published near) is a silent wrong number; flag it in the cell itself.
+        if info is not None and info["match_drift_days"] > 45:
+            pf.font = Font(size=9, color=RED, bold=True)
+            pf.value = f"{priced_from} (±{info['match_drift_days']}d off request)"
+
         if chg is None:
-            ws.cell(row=r, column=6, value="n/a").font = Font(color=RED, size=9)
+            ws.cell(row=r, column=9, value="n/a").font = Font(color=RED, size=9)
         else:
-            c = ws.cell(row=r, column=6, value=chg / 100.0)
+            c = ws.cell(row=r, column=9, value=chg / 100.0)
             c.number_format = "+0.0%;-0.0%"
             c.font = Font(color=RED if chg > 0 else GREEN)
             now = base * (1 + chg / 100.0)
-            ws.cell(row=r, column=7, value=now).number_format = '"$"#,##0.00'
-            d = ws.cell(row=r, column=8, value=now - base)
+            ws.cell(row=r, column=10, value=now).number_format = '"$"#,##0.00'
+            d = ws.cell(row=r, column=11, value=now - base)
             d.number_format = '"+$"#,##0.00;"-$"#,##0.00'
             d.font = Font(bold=True, color=RED if now > base else GREEN)
         r += 1
 
     if r > first_data_row:
         ws.cell(row=r, column=1, value="TOTAL").font = Font(bold=True)
-        for col in (5, 7, 8):
+        for col in (5, 10, 11):
             L = get_column_letter(col)
             c = ws.cell(row=r, column=col, value=f"=SUM({L}{first_data_row}:{L}{r - 1})")
             c.font = Font(bold=True)
@@ -192,6 +218,11 @@ def sheet_bom(wb: Workbook, bom: list[dict], rows: list[dict]) -> None:
         ws.cell(row=r + 2, column=1,
                 value="Assumes your input price tracks its published index 1:1. Contracted or hedged "
                       "inputs will move less; treat this as an exposure estimate, not an invoice.").font = \
+            Font(italic=True, size=9, color="FF6B7280")
+        ws.cell(row=r + 3, column=1,
+                value="Each row is priced from the index observation nearest its own baseline date. "
+                      "A red 'Index priced from' means the series had no print near that date, or no "
+                      "baseline date was given and a 12-month window was substituted.").font = \
             Font(italic=True, size=9, color="FF6B7280")
 
 

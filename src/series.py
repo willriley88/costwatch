@@ -198,6 +198,43 @@ def pct_change(sid: str, months: int, refresh: bool = False) -> float | None:
     return (obs[-1][1] / base[1] - 1.0) * 100.0
 
 
+def change_since(sid: str, baseline: str, refresh: bool = False) -> dict | None:
+    """Percent change from a CALLER-SUPPLIED baseline date to the latest print.
+
+    `pct_change` answers "how much has this moved in N months", which is the
+    right question for a market summary and the WRONG one for a BOM: the user's
+    baseline unit cost was struck on a specific date, and applying a fixed
+    12-month move to an 18-month-old baseline understates their exposure while
+    applying it to a 2-month-old baseline invents one.
+
+    Returns the matched baseline observation too, so the workbook can show which
+    date it actually priced against and how far that sits from what was asked —
+    the series may simply not publish on the requested date.
+    """
+    obs = load(sid, refresh)
+    if len(obs) < 2:
+        return None
+    try:
+        want = date.fromisoformat(baseline)
+    except (TypeError, ValueError):
+        return None
+    base = min(obs, key=lambda o: abs((date.fromisoformat(o[0]) - want).days))
+    if base[1] == 0:
+        return None
+    latest_date, latest_val = obs[-1]
+    drift = abs((date.fromisoformat(base[0]) - want).days)
+    return {
+        "pct": (latest_val / base[1] - 1.0) * 100.0,
+        "baseline_requested": baseline,
+        "baseline_matched": base[0],
+        "baseline_value": base[1],
+        "latest_date": latest_date,
+        "latest_value": latest_val,
+        "match_drift_days": drift,
+        "span_days": (date.fromisoformat(latest_date) - date.fromisoformat(base[0])).days,
+    }
+
+
 def series_table(sids: list[str], refresh: bool = False) -> list[dict]:
     """One row per series with the changes a cost review actually reports."""
     rows = []
