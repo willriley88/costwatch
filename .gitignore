@@ -1,0 +1,6 @@
+data/cache/
+.venv/
+__pycache__/
+*.pyc
+*.xlsx
+!data/example_*.xlsx
