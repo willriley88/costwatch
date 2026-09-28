@@ -65,10 +65,30 @@ def sheet_summary(wb: Workbook, rows: list[dict]) -> None:
     ws["A2"] = f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC · public US series (BLS PPI/CPI, EIA via FRED) · no proprietary data"
     ws["A2"].font = Font(size=9, italic=True, color="FF6B7280")
 
-    _hdr(ws, 4, ["Input", "Category", "Series", "As of", "Level", "Unit", "3-mo %", "12-mo %", "Obs"],
-         [34, 13, 15, 12, 12, 22, 10, 10, 8])
+    # The generation timestamp says when the FILE was built, which is not how
+    # fresh the DATA is. PPI prints land ~2 weeks after month end and get
+    # revised, so a workbook built today can be reporting a 7-week-old print.
+    # Stating the lag stops the file from looking more current than it is.
+    dated = [r["as_of"] for r in rows if r.get("as_of")]
+    if dated:
+        oldest, newest = min(dated), max(dated)
+        today = datetime.now(timezone.utc).date()
+        lag = (today - date.fromisoformat(newest)).days
+        msg = (f"Data currency: most recent observation {newest} "
+               f"({lag} days old); oldest tracked series {oldest}. "
+               f"Published indices lag the month they describe — this is the "
+               f"data's age, not the file's.")
+        c = ws["A3"]
+        c.value = msg
+        c.font = Font(size=9, italic=True, bold=lag > 45,
+                      color=RED if lag > 45 else "FF6B7280")
 
-    r = 5
+    _hdr(ws, 5, ["Input", "Category", "Series", "As of", "Age (days)", "Level", "Unit",
+                 "3-mo %", "12-mo %", "Obs"],
+         [34, 13, 15, 12, 11, 12, 22, 10, 10, 8])
+
+    r = 6
+    today = datetime.now(timezone.utc).date()
     for row in sorted(rows, key=lambda x: (x["category"], x["label"])):
         ws.cell(row=r, column=1, value=row["label"])
         ws.cell(row=r, column=2, value=row["category"])
@@ -79,23 +99,30 @@ def sheet_summary(wb: Workbook, rows: list[dict]) -> None:
             r += 1
             continue
         ws.cell(row=r, column=4, value=row["as_of"])
-        ws.cell(row=r, column=5, value=round(row["value"], 3)).number_format = "#,##0.000"
-        ws.cell(row=r, column=6, value=row["unit"]).font = Font(size=9)
-        for col, key in ((7, "chg_3m_pct"), (8, "chg_12m_pct")):
+        age = (today - date.fromisoformat(row["as_of"])).days
+        ac = ws.cell(row=r, column=5, value=age)
+        ac.font = Font(color=RED if age > 45 else "FF6B7280", size=9, bold=age > 45)
+        ws.cell(row=r, column=6, value=round(row["value"], 3)).number_format = "#,##0.000"
+        ws.cell(row=r, column=7, value=row["unit"]).font = Font(size=9)
+        for col, key in ((8, "chg_3m_pct"), (9, "chg_12m_pct")):
             v = row[key]
             c = ws.cell(row=r, column=col, value=(round(v, 2) if v is not None else "n/a"))
             c.number_format = "+0.00%;-0.00%"
             if v is not None:
                 c.value = v / 100.0
                 c.font = Font(color=RED if v > 0 else GREEN, bold=abs(v) >= 5)
-        ws.cell(row=r, column=9, value=row["obs_count"])
+        ws.cell(row=r, column=10, value=row["obs_count"])
         if r % 2 == 0:
-            for col in range(1, 10):
+            for col in range(1, 11):
                 ws.cell(row=r, column=col).fill = PatternFill("solid", fgColor=LIGHT)
         r += 1
 
     ws.cell(row=r + 1, column=1,
             value="Positive = input cost rose. Indices are not dollars; use the BOM Impact sheet to convert.").font = \
+        Font(italic=True, size=9, color="FF6B7280")
+    ws.cell(row=r + 2, column=1,
+            value="Age is days from today to the observation date. Red (>45 days) means the series has not "
+                  "printed recently — normal for monthly PPI early in a month, worth checking otherwise.").font = \
         Font(italic=True, size=9, color="FF6B7280")
 
 
